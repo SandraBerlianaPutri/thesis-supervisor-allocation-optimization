@@ -1,0 +1,723 @@
+---
+title: "Alokasi Dosen Pembimbing Pertama"
+author: "Sandra Berliana Putri"
+date: "2026-05-09"
+output: html_document
+---
+
+# https://luca-scr.github.io/GA/articles/GA.html
+
+# Pengumpulan Data
+```{r}
+library(readxl)
+
+data_mahasiswa <- read_excel("D:\\Skripsi\\Alokasi Dosen Pembimbing Ketua Tugas Akhir Mahasiswa dengan Pendekatan Algoritma Genetika\\Olah Data\\Data Mahasiswa.xlsx")
+
+data_dosen <- read_excel("D:\\Skripsi\\Alokasi Dosen Pembimbing Ketua Tugas Akhir Mahasiswa dengan Pendekatan Algoritma Genetika\\Olah Data\\Data Dosen.xlsx")
+```
+
+```{r}
+# sampel
+data_mahasiswa$`Topik yang diminati`[46]
+substr(data_dosen$`Judul Penelitian`[12], 1, 500)
+```
+
+# Preprocessing Data
+## Pembentukan Peubah Bidang Penelitian Dosen
+```{r}
+data_dosen$`Bidang Penelitian` <- paste(
+  data_dosen$`Bidang Minat`,
+  data_dosen$`Judul Penelitian`,
+  sep = " ; "
+)
+```
+
+## Melakukan Filter pada Dosen Pilihan agar Sesuai Kriteria Administratif
+```{r}
+# Mengeluarkan dosen yang tidak bisa menjadi pembimbing pertama dari pilihan mahasiswa
+for (i in 1:nrow(data_mahasiswa)) {
+  
+  pilihan <- c(
+    data_mahasiswa$`Pilihan 1`[i],
+    data_mahasiswa$`Pilihan 2`[i],
+    data_mahasiswa$`Pilihan 3`[i]
+  )
+  
+  # hapus AHW dan KAN
+  pilihan <- pilihan[!pilihan %in% c("AHW", "KAN")]
+  
+  # tambahkan NA kalau jumlah pilihan jadi kurang dari 3
+  pilihan <- c(pilihan, rep(NA, 3 - length(pilihan)))
+  
+  # masukkan lagi ke kolom
+  data_mahasiswa$`Pilihan 1`[i] <- pilihan[1]
+  data_mahasiswa$`Pilihan 2`[i] <- pilihan[2]
+  data_mahasiswa$`Pilihan 3`[i] <- pilihan[3]
+}
+
+data_mahasiswa
+```
+
+## Menangani Missing Value
+```{r}
+# Imputasi topik
+idx_topik_kosong <- which(
+  is.na(data_mahasiswa$`Topik yang diminati`) |
+  data_mahasiswa$`Topik yang diminati` == ""
+)
+
+data_mahasiswa$`Topik yang diminati`[idx_topik_kosong] <- "Statistika dan Sains Data"
+
+# Imputasi Dosen Pilihan
+# Hanya jika pilihan1,2,3 semuanya kosong
+set.seed(7)
+
+# 1. Mahasiswa yg semua pilihan kosong
+idx_kosong <- which(
+  (is.na(data_mahasiswa$`Pilihan 1`) | data_mahasiswa$`Pilihan 1` == "") &
+  (is.na(data_mahasiswa$`Pilihan 2`) | data_mahasiswa$`Pilihan 2` == "") &
+  (is.na(data_mahasiswa$`Pilihan 3`) | data_mahasiswa$`Pilihan 3` == "")
+)
+
+n_kosong <- length(idx_kosong)
+
+# 2. Daftar semua dosen
+daftar_dosen <- unique(data_dosen$`Dosen Pembimbing 1`)
+
+# 3. Hitung frekuensi Pilihan 1
+freq_p1 <- table(data_mahasiswa$`Pilihan 1`)
+
+# jadi dataframe
+df_freq <- data.frame(
+  dosen = daftar_dosen,
+  freq = 0
+)
+
+# isi frekuensi sesuai tabel
+match_idx <- match(df_freq$dosen, names(freq_p1))
+df_freq$freq[!is.na(match_idx)] <- as.numeric(freq_p1[match_idx[!is.na(match_idx)]])
+
+# 4. Urutkan freq kecil -> besar
+df_freq <- df_freq[order(df_freq$freq), ]
+
+# 5. Ambil dosen sampai >= jumlah mahasiswa kosong
+kandidat <- c()
+i <- 1
+
+while(length(kandidat) < n_kosong){
+  
+  freq_i <- unique(df_freq$freq)[i]
+  
+  dosen_i <- df_freq$dosen[df_freq$freq == freq_i]
+  
+  kandidat <- c(kandidat, dosen_i)
+  
+  i <- i + 1
+}
+
+# 6. Acak kandidat
+hasil <- sample(
+  kandidat,
+  size = n_kosong,
+  replace = FALSE
+)
+
+# 7. Isi Pilihan 1
+data_mahasiswa$`Pilihan 1`[idx_kosong] <- hasil
+
+head(data_mahasiswa[idx_kosong,])
+```
+
+## Translasi
+```{r}
+library(polyglotr)
+
+data_mahasiswa$topik_penelitian_eng <- NA
+
+for (i in 1:nrow(data_mahasiswa)) {
+  teks <- data_mahasiswa$`Topik yang diminati`[i]
+  
+  data_mahasiswa$topik_penelitian_eng[i] <- google_translate(
+    teks,
+    target_language = "en",
+    source_language = "id"
+  )
+}
+```
+
+```{r}
+# hapus link karena dapat mengganggu proses translasi
+data_dosen$`Bidang Penelitian` <- gsub("http[s]?://[^ ]+", "", data_dosen$`Bidang Penelitian`)
+data_dosen$`Bidang Penelitian` <- gsub("www\\.[^ ]+", "", data_dosen$`Bidang Penelitian`)
+
+data_dosen$bidang_penelitian_eng <- NA
+
+for (i in 1:nrow(data_dosen)) {
+  data_dosen$bidang_penelitian_eng[i] <- google_translate_long_text(
+    data_dosen$`Bidang Penelitian`[i],
+    target_language = "en",
+    source_language = "id"
+  )
+}
+```
+
+```{r}
+# sampel
+data_mahasiswa$topik_penelitian_eng[46]
+substr(data_dosen$bidang_penelitian_eng[12], 1, 500)
+```
+
+## Case Folding
+```{r}
+data_dosen$bidang_penelitian_bersih <- tolower(data_dosen$bidang_penelitian_eng)
+data_mahasiswa$topik_penelitian_bersih <- tolower(data_mahasiswa$topik_penelitian_eng)
+```
+
+```{r}
+# sampel
+data_mahasiswa$topik_penelitian_bersih[46]
+substr(data_dosen$bidang_penelitian_bersih[12], 1, 500)
+```
+
+## Text Cleaning
+```{r}
+# hapus tanda baca
+data_dosen$bidang_penelitian_bersih <- gsub("[[:punct:]]", " ", data_dosen$bidang_penelitian_bersih)
+
+data_mahasiswa$topik_penelitian_bersih <- gsub("[[:punct:]]", " ", data_mahasiswa$topik_penelitian_bersih)
+
+# hapus angka
+data_dosen$bidang_penelitian_bersih <- gsub("[[:digit:]]", " ", data_dosen$bidang_penelitian_bersih)
+
+data_mahasiswa$topik_penelitian_bersih <- gsub("[[:digit:]]", " ", data_mahasiswa$topik_penelitian_bersih)
+
+# hapus simbol
+data_dosen$bidang_penelitian_bersih <- gsub("[^\x20-\x7E]", " ", data_dosen$bidang_penelitian_bersih)
+data_mahasiswa$topik_penelitian_bersih <- gsub("[^\x20-\x7E]", " ", data_mahasiswa$topik_penelitian_bersih)
+
+# hapus baris baru
+data_dosen$bidang_penelitian_bersih <- gsub("[\r\n\t]", " ", data_dosen$bidang_penelitian_bersih)
+
+data_mahasiswa$topik_penelitian_bersih <- gsub("[\r\n\t]", " ", data_mahasiswa$topik_penelitian_bersih)
+
+# rapikan spasi
+data_dosen$bidang_penelitian_bersih <- gsub(" +", " ", data_dosen$bidang_penelitian_bersih)
+data_dosen$bidang_penelitian_bersih <- trimws(data_dosen$bidang_penelitian_bersih)
+
+data_mahasiswa$topik_penelitian_bersih <- gsub(" +", " ", data_mahasiswa$topik_penelitian_bersih)
+data_mahasiswa$topik_penelitian_bersih <- trimws(data_mahasiswa$topik_penelitian_bersih)
+```
+
+```{r}
+# sampel
+data_mahasiswa$topik_penelitian_bersih[46]
+substr(data_dosen$bidang_penelitian_bersih[12], 1, 500)
+```
+
+## Stopword Removal
+https://github.com/stopwords-iso/stopwords-en/blob/master/stopwords-en.txt
+```{r}
+library(tm)
+stopword_custom <- readLines("D:\\Skripsi\\Alokasi Dosen Pembimbing Ketua Tugas Akhir Mahasiswa dengan Pendekatan Algoritma Genetika\\Olah Data\\stopwords-en.txt")
+
+stopword_custom <- tolower(trimws(stopword_custom))
+stopword_custom <- stopword_custom[stopword_custom != ""]
+
+stopword_all <- c(
+  stopwords("en"),
+  stopword_custom
+)
+
+data_mahasiswa$topik_penelitian_bersih <- removeWords(
+  data_mahasiswa$topik_penelitian_bersih,
+  stopword_all
+)
+
+data_dosen$bidang_penelitian_bersih <- removeWords(
+  data_dosen$bidang_penelitian_bersih,
+  stopword_all
+)
+```
+
+```{r}
+# rapikan spasi kembali
+data_mahasiswa$topik_penelitian_bersih <- gsub(" +", " ", data_mahasiswa$topik_penelitian_bersih)
+data_mahasiswa$topik_penelitian_bersih <- trimws(data_mahasiswa$topik_penelitian_bersih)
+
+data_dosen$bidang_penelitian_bersih <- gsub(" +", " ", data_dosen$bidang_penelitian_bersih )
+data_dosen$bidang_penelitian_bersih  <- trimws(data_dosen$bidang_penelitian_bersih)
+```
+
+```{r}
+# sampel
+data_mahasiswa$topik_penelitian_bersih[46]
+substr(data_dosen$bidang_penelitian_bersih[12], 1, 500)
+```
+
+# Tokenizing n-gram (unigram, unibigram, bigram)
+```{r}
+library(quanteda)
+
+corp <- corpus(c(
+  data_mahasiswa$topik_penelitian_bersih,
+  data_dosen$bidang_penelitian_bersih
+))
+
+# unigram
+tok_unigram <- tokens(corp)
+dfm_unigram <- dfm(tok_unigram)
+dim(dfm_unigram)
+
+# bigram
+tok_bigram <- tokens_ngrams(tokens(corp), n = 2)
+dfm_bigram <- dfm(tok_bigram)
+dim(dfm_bigram)
+
+# unibigram
+tok_unibigram <- tokens_ngrams(tokens(corp), n = 1:2)
+dfm_unibigram <- dfm(tok_unibigram)
+dim(dfm_unibigram)
+```
+
+```{r}
+# sampel
+tok_unigram[53,]
+tok_unibigram[53,]
+tok_bigram[53,]
+```
+
+# Pembobotan TF-IDF
+```{r}
+tfidf_unigram <- dfm_tfidf(dfm_unigram, scheme_tf = "prop")
+dim(tfidf_unigram)
+
+tfidf_bigram <- dfm_tfidf(dfm_bigram, scheme_tf = "prop")
+dim(tfidf_bigram)
+
+tfidf_unibigram <- dfm_tfidf(dfm_unibigram, scheme_tf = "prop")
+dim(tfidf_unibigram)
+```
+
+```{r}
+tfidf_unigram[1,]
+tfidf_unigram[2,]
+tfidf_unigram[3,]
+tfidf_unigram[59,]
+tfidf_unigram[60,]
+tfidf_unigram[61,]
+```
+
+```{r}
+tfidf_bigram[1,]
+tfidf_bigram[2,]
+tfidf_bigram[3,]
+tfidf_bigram[59,]
+tfidf_bigram[60,]
+tfidf_bigram[61,]
+```
+
+
+# Perhitungan Kesesuaian Topik dengan Cosine Similarity
+```{r}
+library(proxy)
+
+m <- nrow(data_mahasiswa) 
+n <- nrow(data_dosen)
+
+mat_unigram <- as.matrix(tfidf_unigram)
+unigram_mhs   <- mat_unigram[1:m, ]
+unigram_dosen <- mat_unigram[(m+1):(m+n), ]
+cosine_unigram <- as.matrix(simil(unigram_mhs, unigram_dosen, method = "cosine"))
+
+mat_unibigram <- as.matrix(tfidf_unibigram)
+unibigram_mhs   <- mat_unibigram[1:m, ]
+unibigram_dosen <- mat_unibigram[(m+1):(m+n), ]
+cosine_unibigram <- as.matrix(simil(unibigram_mhs, unibigram_dosen, method = "cosine"))
+
+mat_bigram <- as.matrix(tfidf_bigram)
+bigram_mhs   <- mat_bigram[1:m, ]
+bigram_dosen <- mat_bigram[(m+1):(m+n), ]
+cosine_bigram <- as.matrix(simil(bigram_mhs, bigram_dosen, method = "cosine"))
+```
+
+```{r}
+max(cosine_unigram)
+max(cosine_unibigram)
+max(cosine_bigram)
+cosine_unigram[7,]
+cosine_unibigram[7,]
+cosine_bigram[7,]
+```
+
+# Alokasi Dosen Pembimbing 1 dengan GA
+```{r}
+library(GA)
+
+# jumlah mahasiswa
+m
+
+# jumlah dosen
+n
+
+# buat id dosen dan id mahasiswa
+data_dosen$id_dosen <- 1:nrow(data_dosen)
+data_mahasiswa$id_mahasiswa <- 1:nrow(data_mahasiswa)
+
+# ambil kapasitas dosen
+kapasitas <- data_dosen$`Kapasitas Maksimum Bimbingan`
+
+# ubah pilihan dosen mahasiswa menjadi id dosen
+data_mahasiswa$pil1_id <- match(data_mahasiswa$`Pilihan 1`, data_dosen$`Dosen Pembimbing 1`)
+data_mahasiswa$pil2_id <- match(data_mahasiswa$`Pilihan 2`, data_dosen$`Dosen Pembimbing 1`)
+data_mahasiswa$pil3_id <- match(data_mahasiswa$`Pilihan 3`, data_dosen$`Dosen Pembimbing 1`)
+```
+
+## Fungsi Penalti
+```{r}
+hitung_penalti_pilihan <- function(g, p1, p2, p3,
+                                   w_p2, w_p3, w_pl) {
+
+  if (g == p1) {
+    return(0)
+  } else if (!is.na(p2) && g == p2) {
+    return(w_p2)
+  } else if (!is.na(p3) && g == p3) {
+    return(w_p3)
+  } else {
+    return(w_pl)
+  }
+}
+```
+
+```{r}
+hitung_penalti_topik <- function(sim_ij, w_t) {
+  return(w_t * (1 - sim_ij))
+}
+```
+
+```{r}
+# Penalti kapasitas konstan: kelebihan 1 atau 4 orang = penalti sama
+hitung_penalti_kapasitas_konstan <- function(solusi, kapasitas, n, w_k) {
+  
+  beban   <- tabulate(solusi, nbins = n)
+  penalti <- sum(ifelse(beban > kapasitas, w_k, 0))
+  
+  list(beban = beban, penalti = penalti)
+}
+ 
+# Penalti kapasitas proporsional: penalti = w_k x jumlah kelebihan
+hitung_penalti_kapasitas_prop <- function(solusi, kapasitas, n, w_k) {
+  
+  beban   <- tabulate(solusi, nbins = n)
+  penalti <- sum(w_k * pmax(0, beban - kapasitas))
+  
+  list(beban = beban, penalti = penalti)
+}
+```
+
+## Fungsi Fitness
+```{r}
+fitness_dosbing <- function(x, sim_mat, data_mahasiswa, kapasitas, m, n,
+                           w_k, w_p2, w_p3, w_pl, w_t,
+                           fn_penalti_kapasitas) {
+  
+  # ubah hasil GA menjadi nomor dosen
+  solusi <- floor(x)
+  
+  # penalti kapasitas
+  penalti_kapasitas <- fn_penalti_kapasitas(
+    solusi    = solusi,
+    kapasitas = kapasitas,
+    n         = n,
+    w_k     = w_k
+  )$penalti
+  
+  penalti_pilihan <- 0
+  penalti_topik   <- 0
+  
+  for (i in 1:m) {
+    
+    g      <- solusi[i]
+    p1     <- data_mahasiswa$pil1_id[i]
+    p2     <- data_mahasiswa$pil2_id[i]
+    p3     <- data_mahasiswa$pil3_id[i]
+    sim_ij <- sim_mat[i, g]
+    
+    # penalti pilihan 
+    penalti_pilihan <- penalti_pilihan + hitung_penalti_pilihan(
+      g      = g,
+      p1     = p1,
+      p2     = p2,
+      p3     = p3,
+      w_p2   = w_p2,
+      w_p3   = w_p3,
+      w_pl = w_pl
+    )
+    
+    # penalti topik 
+    penalti_topik <- penalti_topik + hitung_penalti_topik(
+      sim_ij = sim_ij,
+      w_t  = w_t
+    )
+  }
+  
+  total_cost <- penalti_kapasitas + penalti_pilihan + penalti_topik
+  fitness    <- 1 / (1 + total_cost)
+  
+  return(fitness)
+}
+```
+
+## Parameter Skenario
+```{r}
+# Bobot kecil
+bobot_kecil <- list(
+  w_k  = 50,   # penalti kapasitas
+  w_p2   = 1,    # dapat pilihan 2
+  w_p3   = 2,    # dapat pilihan 3
+  w_pl = 10,   # di luar semua pilihan
+  w_t  = 5     # koefisien penalti similarity
+)
+ 
+# Bobot besar
+bobot_besar <- list(
+  w_k  = 1000, # penalti kapasitas
+  w_p2   = 1,  
+  # dapat pilihan 2 (sama)
+  w_p3   = 5,    # dapat pilihan 3
+  w_pl = 100,  # di luar semua pilihan
+  w_t  = 10    # koefisien penalti similarity
+)
+ 
+# Definisi 8 skenario (2 generasi x 2 penalti kapasitas x 2 bobot)
+skenario <- list(
+  S1 = list(generasi = 100,  fn_kapasitas = hitung_penalti_kapasitas_konstan, bobot = bobot_kecil),
+  S2 = list(generasi = 100,  fn_kapasitas = hitung_penalti_kapasitas_konstan, bobot = bobot_besar),
+  S3 = list(generasi = 100,  fn_kapasitas = hitung_penalti_kapasitas_prop, bobot = bobot_kecil),
+  S4 = list(generasi = 100,  fn_kapasitas = hitung_penalti_kapasitas_prop, bobot = bobot_besar),
+  S5 = list(generasi = 1000, fn_kapasitas = hitung_penalti_kapasitas_konstan, bobot = bobot_kecil),
+  S6 = list(generasi = 1000, fn_kapasitas = hitung_penalti_kapasitas_konstan, bobot = bobot_besar),
+  S7 = list(generasi = 1000, fn_kapasitas = hitung_penalti_kapasitas_prop, bobot = bobot_kecil),
+  S8 = list(generasi = 1000, fn_kapasitas = hitung_penalti_kapasitas_prop, bobot = bobot_besar)
+)
+```
+
+## Jalankan 8 Skenario x 3 Versi N-gram
+```{r}
+library(tictoc)
+
+# Daftar matriks similarity per versi n-gram
+versi_ngram <- list(
+  unigram   = cosine_unigram,
+  bigram    = cosine_bigram,
+  unibigram = cosine_unibigram
+)
+
+hasil_semua <- list()
+
+for (nama_ngram in names(versi_ngram)) {
+  
+  cat("Versi N-gram:", toupper(nama_ngram), "\n")
+  
+  sim_mat <- versi_ngram[[nama_ngram]]
+  hasil_skenario <- list()
+  
+  for (nama in names(skenario)) {
+    
+    cat("Menjalankan", nama, "\n")
+    s <- skenario[[nama]]
+    
+    # Mulai hitung waktu
+    waktu_mulai <- proc.time()
+    
+    ga_result <- ga(
+      type    = "real-valued",
+      fitness = function(x) fitness_dosbing(
+        x                    = x,
+        sim_mat              = sim_mat,
+        data_mahasiswa       = data_mahasiswa,
+        kapasitas            = kapasitas,
+        m                    = nrow(data_mahasiswa),
+        n                    = nrow(data_dosen),
+        w_k                = s$bobot$w_k,
+        w_p2                 = s$bobot$w_p2,
+        w_p3                 = s$bobot$w_p3,
+        w_pl               = s$bobot$w_pl,
+        w_t                = s$bobot$w_t,
+        fn_penalti_kapasitas = s$fn_kapasitas
+      ),
+      lower    = rep(1, m),
+      upper    = rep(n + 0.999, m),
+      popSize  = 50,
+      maxiter  = s$generasi,
+      keepBest = TRUE,
+      selection = gareal_rwSelection,
+      crossover = gareal_spCrossover,
+      mutation = gareal_raMutation
+    )
+    
+    # Hitung waktu 
+    waktu_selesai <- proc.time()
+    waktu_detik   <- as.numeric((waktu_selesai - waktu_mulai)["elapsed"])
+    
+    solusi_terbaik <- floor(ga_result@solution[1, ])
+    
+    hasil_skenario[[nama]] <- list(
+      ga      = ga_result,
+      solusi  = solusi_terbaik,
+      fitness = ga_result@fitnessValue,
+      waktu   = waktu_detik        
+    )
+    
+    cat(nama, "selesai - Fitness:", round(ga_result@fitnessValue, 6),
+        "| Waktu:", round(waktu_detik, 2), "detik\n")
+  }
+  
+  hasil_semua[[nama_ngram]] <- hasil_skenario
+}
+```
+
+```{r}
+ga_obj <- hasil_semua$unibigram$S8$ga
+
+# Parameter utama
+ga_obj@popSize          # ukuran populasi
+ga_obj@maxiter          # maksimum generasi
+ga_obj@elitism          # jumlah individu elitis
+ga_obj@pcrossover       # probabilitas crossover
+ga_obj@pmutation        # probabilitas mutasi
+
+hasil_semua$unigram$S1$ga@solution
+```
+
+```{r}
+as.vector(hasil_semua$unibigram$S4$solusi)
+```
+
+# Evaluasi
+## Evaluasi Kapasitas Maksimum Bimbingan Dosen
+```{r}
+keterangan <- list(
+  S1 = c("100",  "Konstan",         "Kecil"),
+  S2 = c("100",  "Konstan",         "Besar"),
+  S3 = c("100",  "Proporsional", "Kecil"),
+  S4 = c("100",  "Proporsional", "Besar"),
+  S5 = c("1000", "Konstan",         "Kecil"),
+  S6 = c("1000", "Konstan",         "Besar"),
+  S7 = c("1000", "Proporsional", "Kecil"),
+  S8 = c("1000", "Proporsional", "Besar")
+)
+
+for (nama_ngram in names(hasil_semua)) {
+  
+  cat("\nBEBAN DOSEN:", toupper(nama_ngram), "\n")
+  cat(sprintf("%-6s %-6s %-14s %-6s %-6s %-6s\n",
+              "Sken", "Gen", "Pen.Kapasitas", "Bobot", "Max", "Min"))
+  cat(strrep("-", 50), "\n")
+  
+  for (nama in names(hasil_semua[[nama_ngram]])) {
+    
+    solusi <- as.vector(hasil_semua[[nama_ngram]][[nama]]$solusi)
+    beban  <- tabulate(solusi, nbins = nrow(data_dosen))
+    ket    <- keterangan[[nama]]
+    
+    cat(sprintf("%-6s %-6s %-14s %-6s %-6d %-6d\n",
+                nama, ket[1], ket[2], ket[3],
+                max(beban), min(beban)))
+  }
+}
+```
+
+## Evaluasi Fitness dan Waktu Komputasi
+```{r}
+for (nama_ngram in names(hasil_semua)) {
+  
+  cat("\nRINGKASAN:", toupper(nama_ngram), "\n")
+  cat(sprintf("%-8s %-8s %-16s %-8s %-12s %-10s\n",
+              "Skenario", "Generasi", "Penalti Kap", "Bobot",
+              "Fitness", "Waktu(dtk)"))
+  cat(strrep("-", 65), "\n")
+  
+  for (nama in names(hasil_semua[[nama_ngram]])) {
+    ket   <- keterangan[[nama]]
+    fit   <- round(hasil_semua[[nama_ngram]][[nama]]$fitness, 6)
+    waktu <- hasil_semua[[nama_ngram]][[nama]]$waktu
+    
+    cat(sprintf("%-8s %-8s %-16s %-8s %-12.6f %-10.2f\n",
+                nama,
+                ket[1],
+                ket[2],
+                ket[3],
+                fit,
+                waktu))
+  }
+}
+```
+
+## Evaluasi Dosen Pilihan dan Kesesuaian Topik
+```{r}
+# Evaluasi Soft Constraint per Skenario dan N-gram
+for (nama_ngram in names(hasil_semua)) {
+  
+  sim_mat <- versi_ngram[[nama_ngram]]
+  
+  cat("\nEVALUASI SOFT CONSTRAINT:", toupper(nama_ngram), "\n")
+  cat(sprintf("%-6s %-8s %-8s %-8s %-10s %-10s\n",
+              "Sken", "Pil1", "Pil2", "Pil3", "NonPilihan", "Avg.Sim"))
+  cat(strrep("-", 75), "\n")
+  
+  for (nama in names(hasil_semua[[nama_ngram]])) {
+    
+    solusi <- as.vector(hasil_semua[[nama_ngram]][[nama]]$solusi)
+    
+    # Soft Constraint 1: Pelanggaran Dosen Pilihan
+    n_pil1 <- 0
+    n_pil2 <- 0
+    n_pil3 <- 0
+    n_non  <- 0
+    
+    for (i in 1:nrow(data_mahasiswa)) {
+      g  <- solusi[i]
+      p1 <- data_mahasiswa$pil1_id[i]
+      p2 <- data_mahasiswa$pil2_id[i]
+      p3 <- data_mahasiswa$pil3_id[i]
+      
+      if (!is.na(p1) && g == p1) {
+        n_pil1 <- n_pil1 + 1
+      } else if (!is.na(p2) && g == p2) {
+        n_pil2 <- n_pil2 + 1
+      } else if (!is.na(p3) && g == p3) {
+        n_pil3 <- n_pil3 + 1
+      } else {
+        n_non <- n_non + 1
+      }
+    }
+    
+    # Soft Constraint 2: Kesesuaian Topik
+    sim_values <- sapply(1:nrow(data_mahasiswa), function(i) sim_mat[i, solusi[i]])
+    avg_sim <- mean(sim_values)
+    
+    cat(sprintf("%-6s %-8d %-8d %-8d %-10d %-10.4f\n",
+                nama, n_pil1, n_pil2, n_pil3, n_non,
+                avg_sim))
+  }
+}
+```
+
+## Tabel Alokasi Dosen per Mahasiswa (isi = nama dosen)
+```{r}
+tabel_alokasi_nama <- data.frame(
+  mahasiswa = data_mahasiswa$`Nama Mahasiswa`
+)
+
+for (nama_ngram in names(hasil_semua)) {
+  for (nama in names(hasil_semua[[nama_ngram]])) {
+    
+    solusi   <- as.vector(floor(hasil_semua[[nama_ngram]][[nama]]$solusi))
+    nama_col <- paste0(nama_ngram, "_", nama)
+    tabel_alokasi_nama[[nama_col]] <- data_dosen$`Dosen Pembimbing 1`[solusi]
+  }
+}
+
+print(tabel_alokasi_nama)
+```
